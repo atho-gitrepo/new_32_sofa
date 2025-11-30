@@ -35,8 +35,10 @@ FIREBASE_CREDENTIALS_JSON_STRING = os.getenv("FIREBASE_CREDENTIALS_JSON")
 # --- CONSTANTS ---
 SLEEP_TIME = 60
 FIXTURE_API_INTERVAL = 900
-MINUTES_REGULAR_BET = [36, 37]
-BET_TYPE_REGULAR = 'regular'
+# ⬅️ MODIFIED: Check only at 36 minutes
+MINUTES_REGULAR_BET = [36] 
+# ⬅️ NEW CONSTANT for the specific bet type: 0-0 at 36' -> Over 0.5 at HT
+BET_TYPE_OVER_05_HT = 'over_05_ht' 
 STATUS_LIVE = ['LIVE', '1H', '2H', 'ET', 'P']
 STATUS_HALFTIME = 'HT'
 STATUS_FINISHED = ['FT', 'AET', 'PEN'] 
@@ -59,46 +61,10 @@ ALLOWED_LEAGUES = [
 # --- 2. Explicit Country/League Blacklist ---
 # Explicitly exclude countries/leagues known to be high-scoring, high-variance, or amateur.
 EXCLUDED_LEAGUES = [
-    'USA', # General US exclusion
-    'NCAA',
-    'Northeast-10 Conference',
-    'Costa Rican Women Premier Division', 
-    'Liga de Expansion MX Apertura', 
-    'II Lyga', 
-    'Ettan Norra', 
-    'Pervaya Liga',
-    'Promotion d’Honneur',
-    'Liga 4',
-    'Eerste Divisie',
-    'Gozo Football League Second Division',
-    'Eliteserien', 
-    
     # --- Blacklisted Countries/Leagues ---
-    'Poland',
-    'Mexico',
-    'Wales',
-    'Portugal',
-    'Denmark',
-    'Germany',
-    'Hungary',
-    'Sweden',
-    'Serbia',
-    'Switzerland',
-    'Cyprus',
-    'El Salvador',
-    'Lithuania',
-    'Honduras',
-    'Chile',
-    'Norway',
-    'England', 
-    'Colombia',
-    'Women', # Exclude all women's leagues
-    'Friendly', 
-    'Reserves',
-    'Regional League',
-    'Serie C',
-    '3. Liga', # German third division
-    'U19','U22', 'U21', 'U23' # Explicit age-group exclusions
+    'Iran',
+    'Egypt',
+    'Argentina'
 ]
 
 # --- 3. Refined Amateur Keyword Filter ---
@@ -183,11 +149,6 @@ class FirebaseManager:
             return None
     # --- END EFFICIENT LOOKUP METHODS ---
             
-    # 🔴 REMOVED: Replaced by global LOCAL_TRACKED_MATCHES dictionary
-    # def get_tracked_match(self, match_id): ...
-    # def update_tracked_match(self, match_id, data): ...
-    # def delete_tracked_match(self, match_id): ...
-
     def get_stale_unresolved_bets(self, minutes_to_wait=BET_RESOLUTION_WAIT_MINUTES):
         if not self.db: return {}
         try:
@@ -201,7 +162,9 @@ class FirebaseManager:
                 
                 # Check for bet types that need final resolution (currently only 32_over is blocked)
                 # Since the regular bet resolves at HT, we only need to check bets that persist past HT.
-                if bet_info.get('bet_type') not in [BET_TYPE_REGULAR]:
+                # 📌 NOTE: With the new BET_TYPE_OVER_05_HT, all current bets resolve at HT, 
+                # so this check is primarily for any old, non-HT-resolving bets.
+                if bet_info.get('bet_type') not in [BET_TYPE_OVER_05_HT]:
                     placed_at_str = bet_info.get('placed_at')
                     if placed_at_str:
                         try:
@@ -424,12 +387,15 @@ def robust_get_finished_match_details(sofascored_id):
         
     return None
 
-def place_regular_bet(state, fixture_id, score, match_info):
-    """Handles placing the initial 36' bet."""
+def place_over_05_ht_bet(state, fixture_id, score, match_info):
+    """
+    Handles placing the initial bet based on 0-0 at 36'.
+    If score is 0-0 at 36', a bet for Over 0.5 Goals at Halftime is placed.
+    """
     
     # 🟢 OPTIMIZED: Use direct lookup instead of full collection scan
     if firebase_manager.is_bet_unresolved(fixture_id):
-        logger.info(f"Regular bet already exists in 'unresolved_bets' for fixture {fixture_id}. Skipping placement and Telegram message.")
+        logger.info(f"Bet already exists in 'unresolved_bets' for fixture {fixture_id}. Skipping placement.")
         # Ensure the tracked state is marked as placed to stop re-checking in subsequent runs
         if not state.get('36_bet_placed'):
             state['36_bet_placed'] = True
@@ -437,7 +403,8 @@ def place_regular_bet(state, fixture_id, score, match_info):
             LOCAL_TRACKED_MATCHES[fixture_id] = state 
         return
 
-    if score in ['1-1', '2-2', '3-3']:
+    # ⬅️ MODIFIED: Check specifically for '0-0'
+    if score == '0-0': 
         state['36_bet_placed'] = True
         state['36_score'] = score
         # 🟢 MODIFIED: Update the local store
@@ -449,7 +416,8 @@ def place_regular_bet(state, fixture_id, score, match_info):
             'league': match_info['league_name'],
             'country': match_info['country'],
             'league_id': match_info['league_id'],
-            'bet_type': BET_TYPE_REGULAR,
+            # ⬅️ MODIFIED: Use the new bet type constant
+            'bet_type': BET_TYPE_OVER_05_HT, 
             '36_score': score,
             'fixture_id': fixture_id,
             'sofascored_id': fixture_id 
@@ -459,18 +427,22 @@ def place_regular_bet(state, fixture_id, score, match_info):
         message = (
             f"⏱️ **36' - {match_info['match_name']}**\n"
             f"🌍 {match_info['country']} | 🏆 {match_info['league_name']}\n"
-            f"🔢 Score: {score}\n"
-            f"🎯 Correct Score Bet Placed for Half Time"
+            f"🔢 Live Score: **{score}**\n"
+            f"🎯 Over 0.5 HT Goal Bet Placed" # ⬅️ MODIFIED: New message
         )
         send_telegram(message)
     else:
+        # If the score is not 0-0, mark as checked and skip.
         state['36_bet_placed'] = True
         # 🟢 MODIFIED: Update the local store
         LOCAL_TRACKED_MATCHES[fixture_id] = state 
 
 
 def check_ht_result(state, fixture_id, score, match_info):
-    """Checks the result of all placed bets at halftime, skipping 32' over bets."""
+    """
+    Checks the result of all placed bets at halftime.
+    For BET_TYPE_OVER_05_HT, it checks if the halftime score is not 0-0.
+    """
     
     current_score = score
     # 🟢 OPTIMIZED: Use targeted getter function
@@ -485,25 +457,24 @@ def check_ht_result(state, fixture_id, score, match_info):
         country_name = unresolved_bet_data.get('country', 'N/A') 
         league_name = unresolved_bet_data.get('league', 'N/A')
         
-        if bet_type == BET_TYPE_REGULAR:
-            bet_score = unresolved_bet_data.get('36_score', 'N/A')
-            outcome = 'win' if current_score == bet_score else 'loss'
+        # ⬅️ MODIFIED: Check for the new bet type
+        if bet_type == BET_TYPE_OVER_05_HT:
+            # Win condition: Current score is NOT '0-0' (meaning Over 0.5 goals happened)
+            outcome = 'win' if current_score != '0-0' else 'loss' 
             
             if outcome == 'win':
                 message = (
                     f"✅ **HT Result: {match_info['match_name']}**\n"
                     f"🌍 {country_name} | 🏆 {league_name}\n"
                     f"🔢 HT Score: **{current_score}**\n"
-                    f"🎯 Bet Score: **{bet_score}**\n"
-                    f"🎉 36' Bet WON"
+                    f"🎯 Over 0.5 HT Bet WON! (Score > 0-0)"
                 )
             else:
                 message = (
                     f"❌ **HT Result: {match_info['match_name']}**\n"
                     f"🌍 {country_name} | 🏆 {league_name}\n"
                     f"🔢 HT Score: **{current_score}**\n"
-                    f"🎯 Bet Score: **{bet_score}**\n"
-                    f"🔁 36' Bet LOST"
+                    f"🎯 Over 0.5 HT Bet LOST. (Score was 0-0)"
                 )
             
         if outcome:
@@ -607,7 +578,8 @@ def process_live_match(match):
     }
         
     if status.upper() == '1H' and minute in MINUTES_REGULAR_BET and not state.get('36_bet_placed'):
-        place_regular_bet(state, fixture_id, score, match_info)
+        # ⬅️ MODIFIED: Call the renamed function
+        place_over_05_ht_bet(state, fixture_id, score, match_info)
         
     elif status.upper() == STATUS_HALFTIME and firebase_manager.is_bet_unresolved(fixture_id): # OPTIMIZED
         # Only check HT result if an unresolved bet exists (to avoid unnecessary HT checks)
@@ -624,6 +596,8 @@ def check_and_resolve_stale_bets():
     """
     Checks and resolves old, unresolved bets by fetching their final status.
     """
+    # 📌 Note: The only bet type now is BET_TYPE_OVER_05_HT which resolves at HT.
+    # This function is retained to resolve any very old/stuck bets if needed.
     stale_bets = firebase_manager.get_stale_unresolved_bets(BET_RESOLUTION_WAIT_MINUTES)
     if not stale_bets:
         return
@@ -674,8 +648,7 @@ def check_and_resolve_stale_bets():
             outcome = None
             message = ""
 
-            # Currently, only 'regular' bets resolve at HT. If you unblock other bet types
-            # that resolve at FT, their resolution logic would go here.
+            # If you had FT-resolving bet types, their logic would go here.
             
             if outcome and outcome != 'error':
                 if send_telegram(message):
@@ -723,3 +696,4 @@ if __name__ == "__main__":
         finally:
             shutdown_bot()
             logger.info("Bot terminated.")
+
