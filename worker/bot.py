@@ -64,6 +64,10 @@ EXCLUDED_LEAGUES = [
     # --- Blacklisted Countries/Leagues ---
     'Iran',
     'Egypt',
+    'Benin','Ethiopia','Ghana','Armenia','Rwanda','Spain','Italy',
+    'Greece',
+    'Romania',
+    '
     'Argentina'
 ]
 
