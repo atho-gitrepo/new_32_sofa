@@ -67,7 +67,7 @@ EXCLUDED_LEAGUES = [
     'Benin','Ethiopia','Ghana','Armenia','Rwanda','Spain','Italy',
     'Greece',
     'Romania',
-    '
+    'Iraq',
     'Argentina'
 ]
 
