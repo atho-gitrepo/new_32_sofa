@@ -68,6 +68,8 @@ EXCLUDED_LEAGUES = [
     'Greece',
     'Romania',
     'Iraq',
+    'Reserve',
+    
     'Argentina'
 ]
 
